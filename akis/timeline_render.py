@@ -9,6 +9,7 @@ import os
 import tempfile
 from pathlib import Path
 from akis.frame_plan import plan_frame, plan_segments
+from akis.media_service import input_args
 
 
 def active_clips(timeline, frame):
@@ -44,7 +45,7 @@ class TimelineRenderer:
                 TimelineRenderer(self.media, (self.width, self.height), self.font,
                                  brightness=self.brightness, contrast=self.contrast,
                                  saturation=self.saturation).export(timeline, intermediate)
-                args = ['-y', '-i', intermediate, '-vf', f'setpts=PTS/{self.speed:.6f}']
+                args = ['-y', *input_args(intermediate), '-vf', f'setpts=PTS/{self.speed:.6f}']
                 if self.media.has_audio(intermediate):
                     args += ['-af', f'atempo={self.speed:.6f}', '-c:a', 'aac', '-b:a', '192k']
                 args += ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', str(output)]
@@ -80,7 +81,7 @@ class TimelineRenderer:
                     if track.kind in ('video', 'overlay'):
                         if not Path(clip.source).is_file():
                             raise FileNotFoundError(clip.source)
-                        args += ['-i', clip.source]
+                        args += input_args(clip.source)
                         layer += 1
                         graph.append(f'[{index}:v]trim=start={source_in:.9f}:duration={length:.9f},setpts=PTS-STARTPTS+{start:.9f}/TB,scale={self.width}:{self.height}:force_original_aspect_ratio=decrease,pad={self.width}:{self.height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[v{layer}]')
                         graph.append(f'[{base}][v{layer}]overlay=eof_action=pass:enable=\'gte(t,{start:.9f})*lt(t,{(clip.end/fps):.9f})\'[base{layer}]')
@@ -95,7 +96,7 @@ class TimelineRenderer:
                             continue
                         if not Path(clip.source).is_file():
                             raise FileNotFoundError(clip.source)
-                        args += ['-i', clip.source]
+                        args += input_args(clip.source)
                         delay = round(start * 1000)
                         graph.append(f'[{index}:a]atrim=start={source_in:.9f}:duration={length:.9f},asetpts=PTS-STARTPTS,volume={clip.volume:.6f},adelay={delay}:all=1[a{index}]')
                         audio.append(f'[a{index}]')
