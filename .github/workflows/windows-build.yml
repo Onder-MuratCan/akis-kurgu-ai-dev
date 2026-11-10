@@ -3,27 +3,59 @@ name: Windows build and tests
 on:
   push:
     branches: ['main']
+  pull_request:
+    branches: ['main']
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# Never run two release builds for the same ref at once.
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: false
+
+# Supply-chain pinning: third-party actions are pinned to full commit SHAs (the
+# comment shows the matching tag) and FFmpeg, which ships inside the installer, is
+# pinned to an exact Chocolatey package version. Update these deliberately.
+env:
+  FFMPEG_CHOCO_VERSION: '9.0.2'
+
 jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
+      - name: Read application version
+        id: version
+        shell: pwsh
+        run: |
+          $version = (python -c "import akis; print(akis.__version__)").Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid version in akis/__init__.py: $version" }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Building version $version"
       - name: Install FFmpeg
         shell: pwsh
         run: |
-          choco install ffmpeg --yes --no-progress
+          choco install ffmpeg --version=$env:FFMPEG_CHOCO_VERSION --yes --no-progress
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $ffmpegFile = Get-ChildItem -LiteralPath 'C:\ProgramData\chocolatey\lib\ffmpeg\tools' -Filter 'ffmpeg.exe' -File -Recurse | Where-Object { $_.Length -gt 10MB } | Select-Object -First 1
           if (-not $ffmpegFile) { throw 'FFmpeg executable not found' }
+          # Record exactly which FFmpeg binary gets bundled into the installer.
+          $hash = (Get-FileHash -LiteralPath $ffmpegFile.FullName -Algorithm SHA256).Hash
+          $banner = (& $ffmpegFile.FullName -hide_banner -version | Select-Object -First 1)
+          Write-Host "Bundled FFmpeg: $banner"
+          Write-Host "Bundled FFmpeg SHA256: $hash"
+          "Bundled FFmpeg: ``$banner`` — SHA256 ``$hash``" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           $ffmpegFile.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append
           "AKIS_FFMPEG=$($ffmpegFile.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Install dependencies
@@ -68,7 +100,7 @@ jobs:
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup --yes --no-progress }
-          & $iscc installer.iss
+          & $iscc "/DAppVersion=$env:APP_VERSION" installer.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify installer
         shell: pwsh
@@ -86,8 +118,14 @@ jobs:
           python update_smoke.py $setup $destination
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-Process AkisKurguAI -ErrorAction SilentlyContinue | Stop-Process -Force
+      - name: Record installer checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash -LiteralPath 'dist/AkisKurguAI-Setup.exe' -Algorithm SHA256).Hash.ToLower()
+          Write-Host "AkisKurguAI-Setup.exe SHA256: $hash"
+          "Installer ``AkisKurguAI-Setup.exe`` $env:APP_VERSION — SHA256 ``$hash``" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
       - name: Upload Windows package
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: AkisKurguAI-Windows-experimental
           path: dist/AkisKurguAI-Setup.exe
@@ -96,13 +134,15 @@ jobs:
 
 
   release:
-    if: github.ref == 'refs/heads/main'
+    # Only builds of main publish releases; pull requests and other branches stop
+    # after the Windows build/tests above.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: windows
     runs-on: windows-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: AkisKurguAI-Windows-experimental
           path: package
@@ -111,8 +151,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          APP_VERSION: ${{ needs.windows.outputs.version }}
         run: |
-          gh release view v0.3.6 *> $null
-          if ($LASTEXITCODE -eq 0) { Write-Host 'Release already exists'; exit 0 }
-          gh release create v0.3.6 'package/AkisKurguAI-Setup.exe' --target $env:GITHUB_SHA --title 'Akış Kurgu AI 0.3.6' --notes 'Windows kurucusu. Yerel model ilk kullanımda indirilir.'
+          $tag = "v$env:APP_VERSION"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            # Visible in the run summary: the code changed but users get no update.
+            Write-Host "::warning title=Release not published::$tag already exists. Bump __version__ in akis/__init__.py to ship this commit to users."
+            exit 0
+          }
+          $hash = (Get-FileHash -LiteralPath 'package/AkisKurguAI-Setup.exe' -Algorithm SHA256).Hash.ToLower()
+          $notes = "Windows kurucusu. Yerel model ilk kullanımda indirilir.`n`nSHA-256: ``$hash``"
+          gh release create $tag 'package/AkisKurguAI-Setup.exe' --target $env:GITHUB_SHA --title "Akış Kurgu AI $env:APP_VERSION" --notes $notes
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
