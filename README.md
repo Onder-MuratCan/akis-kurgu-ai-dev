@@ -5,17 +5,19 @@
 
 ## Windows'ta kurulum
 
-[**Windows kurucusunu indir — AkisKurguAI-Setup.exe**](https://github.com/anilcanolcer/akis-kurgu-ai/releases/download/v0.3.8/AkisKurguAI-Setup.exe)
+[**Windows kurucusunu indir — AkisKurguAI-Setup.exe**](https://github.com/anilcanolcer/akis-kurgu-ai/releases/latest/download/AkisKurguAI-Setup.exe)
 
 1. Kurucu EXE dosyasını indirin ve çalıştırın.
 2. Kurulum adımlarını tamamlayıp Başlat menüsünden **Akış Kurgu AI** uygulamasını açın.
 3. Yerel Whisper modeli ilk kullanımda internet üzerinden indirilir; sonrasında çevrimdışı kullanılabilir.
 
+> Kurucu henüz kod imzalı değildir; Windows SmartScreen “Windows bilgisayarınızı korudu” uyarısı gösterebilir. Dosyayı yalnızca bu deponun Releases sayfasından indirin ve gerekirse “Ek bilgi → Yine de çalıştır” seçin. Her sürümün SHA-256 özeti sürüm notlarında yayınlanır.
+
 GitHub Windows ortamında kurulum, açılış ve yerel modelin indirilip çevrimdışı açılması denetlenmiştir; farklı cihazlarda ses eşzamanlaması değişebilir.
 
 ## Uygulama görünümü
 
-![Uygulamada örnek video ve zaman çizelgesi](https://raw.githubusercontent.com/anilcanolcer/akis-kurgu-ai/experimental/timeline-render/docs/editor-demo.png)
+![Uygulamada örnek video ve zaman çizelgesi](https://raw.githubusercontent.com/anilcanolcer/akis-kurgu-ai/main/docs/editor-demo.png)
 
 *Uygulamanın gerçek arayüzü; görüntülerde FFmpeg tarafından oluşturulan örnek test videosu kullanılmıştır.*
 
@@ -55,7 +57,6 @@ Python 3.12, Windows ve PATH üzerinde FFmpeg gerekir:
 ```powershell
 git clone https://github.com/anilcanolcer/akis-kurgu-ai.git
 cd akis-kurgu-ai
-git switch experimental/timeline-render
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
@@ -69,7 +70,7 @@ python -m unittest discover -v
 python -m PyInstaller AkisKurguAI.spec --noconfirm --clean
 ```
 
-PyInstaller çıktısı `dist/AkisKurguAI/` klasöründedir. FFmpeg içeren dağıtımlarda ilgili FFmpeg derlemesinin lisans koşulları değerlendirilmelidir.
+PyInstaller çıktısı `dist/AkisKurguAI/` klasöründedir. Kurucu için: `iscc /DAppVersion=<sürüm> installer.iss`. FFmpeg içeren dağıtımlarda ilgili FFmpeg derlemesinin lisans koşulları değerlendirilmelidir.
 
 ## Mimari ve katkı
 
@@ -80,6 +81,14 @@ PyInstaller çıktısı `dist/AkisKurguAI/` klasöründedir. FFmpeg içeren dağ
 - `akis/project_service.py`: proje şeması ve kayıt; `logo.svg`, `logo.png`, `app.ico`: logo ve simge varlıkları.
 
 Hata bildirirken Windows/Python/FFmpeg sürümlerini ve adımları paylaşın; API anahtarlarını veya kişisel medya dosyalarını depoya eklemeyin. Değişikliklerde mevcut proje dosyalarıyla uyumluluğu koruyun ve testleri çalıştırın.
+
+## Sürüm yayınlama ve güvenlik
+
+- Sürüm numarasının tek kaynağı `akis/__init__.py` içindeki `__version__` değeridir. Güncelleme denetimi, Inno Setup kurucusu ve GitHub sürüm etiketi bu değeri kullanır.
+- Yeni sürüm için yalnızca `__version__` artırılır ve `main`'e gönderilir; CI test eder, kurucuyu üretir ve `v<sürüm>` etiketiyle yayınlar. Sürüm artırılmazsa CI uyarı verir ve kullanıcılara güncelleme gitmez. Değişiklikler `CHANGELOG.md` dosyasına yazılır.
+- `main`'e yapılan her gönderim tüm kullanıcılara otomatik güncelleme olarak ulaşabilir. Hesapta iki adımlı doğrulama, `main` dalı ve `v*` etiketleri için koruma kuralları açık tutulmalıdır.
+- Proje dosyaları (`.akis.json`) başkalarından gelebilir; uygulama tüm alanları doğrular ve FFmpeg'i yalnızca yerel dosyalar ve desteklenen kapsayıcı formatlarla (MP4/MOV, MKV/WebM, AVI, MP3, WAV) çalıştırır.
+- CI'daki GitHub Actions eylemleri commit SHA'larına, kurucuya giren FFmpeg ise belirli bir Chocolatey sürümüne sabitlenmiştir; her derlemede FFmpeg ve kurucunun SHA-256 özeti çalıştırma özetine yazılır.
 
 ## Yol haritası
 
