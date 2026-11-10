@@ -1085,7 +1085,7 @@ class MainWindow(QMainWindow):
             return
         if self.caption_backend.currentIndex() == 1:
             self.caption_request_source = self.state.source
-            self.worker = LocalCaptionWorker(self.caption_request_source, self.local_model.currentText(), self.download_model.isChecked())
+            self.worker = LocalCaptionWorker(self.caption_request_source, self.local_model.currentText(), self.download_model.isChecked(), ffmpeg_path())
         else:
             provider = self.caption_backend.currentText()
             if self.provider.currentText() == provider:

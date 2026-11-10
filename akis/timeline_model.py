@@ -4,8 +4,81 @@ All positions are integer frames. Source paths are references; edits never modif
 """
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, field
 from uuid import uuid4
+
+# Limits for documents loaded from disk. Project files can come from other people,
+# so every value is type- and range-checked before it reaches FFmpeg filter graphs.
+MAX_FRAME = 10 ** 8          # ~38 days at 30 fps
+MAX_TRACKS = 64
+MAX_CLIPS_PER_TRACK = 10_000
+MAX_MARKERS = 10_000
+MAX_TEXT = 5_000
+MAX_PATH = 4_096
+MAX_ID = 128
+TRACK_KINDS = {"video", "audio", "text", "overlay"}
+CLIP_KEYS = {"source", "start", "length", "source_in", "source_length", "id", "text", "volume", "keyframes"}
+
+
+def _int(value, name, low=0, high=MAX_FRAME):
+    """Accept JSON integers (or integral floats such as 30.0); reject bools, strings and NaN."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{name} must be an integer")
+    if isinstance(value, float):
+        if not value.is_integer():
+            raise ValueError(f"{name} must be an integer")
+        value = int(value)
+    if not low <= value <= high:
+        raise ValueError(f"{name} is out of range")
+    return value
+
+
+def _str(value, name, limit, allow_empty=True):
+    if not isinstance(value, str) or len(value) > limit or "\0" in value or (not allow_empty and not value):
+        raise ValueError(f"{name} must be text up to {limit} characters")
+    return value
+
+
+def _clip_from_dict(data):
+    if not isinstance(data, dict) or not set(data) <= CLIP_KEYS:
+        raise ValueError("Invalid clip")
+    volume = data.get("volume", 1.0)
+    if isinstance(volume, bool) or not isinstance(volume, (int, float)) or not math.isfinite(volume):
+        raise ValueError("Clip volume must be a number")
+    keyframes = data.get("keyframes", {})
+    if not isinstance(keyframes, dict) or any(
+            not isinstance(name, str) or not isinstance(points, list)
+            or any(not isinstance(p, dict) for p in points) for name, points in keyframes.items()):
+        raise ValueError("Invalid clip keyframes")
+    for points in keyframes.values():
+        for point in points:
+            point["frame"] = _int(point.get("frame"), "Keyframe frame")
+    source_length = data.get("source_length")
+    values = {
+        "source": _str(data.get("source", ""), "Clip source", MAX_PATH),
+        "start": _int(data.get("start"), "Clip start"),
+        "length": _int(data.get("length"), "Clip length", 1),
+        "source_in": _int(data.get("source_in", 0), "Clip source_in"),
+        "source_length": None if source_length is None else _int(source_length, "Clip source_length", 1),
+        "text": _str(data.get("text", ""), "Clip text", MAX_TEXT),
+        "volume": float(volume),
+        "keyframes": keyframes,
+    }
+    if "id" in data:
+        values["id"] = _str(data["id"], "Clip id", MAX_ID, allow_empty=False)
+    return Clip(**values)
+
+
+def _track_from_dict(data):
+    if not isinstance(data, dict) or data.get("kind") not in TRACK_KINDS:
+        raise ValueError("Invalid track")
+    clips = data.get("clips", [])
+    muted = data.get("muted", False)
+    if not isinstance(clips, list) or len(clips) > MAX_CLIPS_PER_TRACK or not isinstance(muted, bool):
+        raise ValueError("Invalid track")
+    return Track(kind=data["kind"], name=_str(data.get("name", ""), "Track name", 200),
+                 muted=muted, clips=[_clip_from_dict(c) for c in clips])
 
 
 @dataclass
@@ -143,10 +216,26 @@ class Timeline:
 
     @classmethod
     def from_dict(cls, data):
-        tracks = [Track(kind=t['kind'], name=t['name'], muted=t.get('muted', False),
-                        clips=[Clip(**c) for c in t.get('clips', [])]) for t in data.get('tracks', [])]
-        return cls(fps_num=data.get('fps_num', 30), fps_den=data.get('fps_den', 1),
-                   tracks=tracks, markers=data.get('markers', []))
+        """Build a timeline from untrusted JSON, validating every field."""
+        if not isinstance(data, dict):
+            raise ValueError("Invalid timeline")
+        fps_num = _int(data.get('fps_num', 30), "fps_num", 1, 1_000_000)
+        fps_den = _int(data.get('fps_den', 1), "fps_den", 1, 1_000_000)
+        if not 1 <= fps_num / fps_den <= 240:
+            raise ValueError("Invalid frame rate")
+        tracks, markers = data.get('tracks', []), data.get('markers', [])
+        if not isinstance(tracks, list) or len(tracks) > MAX_TRACKS:
+            raise ValueError("Invalid track list")
+        if not isinstance(markers, list) or len(markers) > MAX_MARKERS:
+            raise ValueError("Invalid marker list")
+        clean_markers = []
+        for marker in markers:
+            if not isinstance(marker, dict):
+                raise ValueError("Invalid marker")
+            clean_markers.append({'frame': _int(marker.get('frame'), "Marker frame"),
+                                  'label': _str(marker.get('label', ''), "Marker label", 500)})
+        return cls(fps_num=fps_num, fps_den=fps_den,
+                   tracks=[_track_from_dict(t) for t in tracks], markers=clean_markers)
 
     @classmethod
     def from_legacy(cls, state):

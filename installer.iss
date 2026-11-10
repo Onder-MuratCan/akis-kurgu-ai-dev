@@ -1,5 +1,9 @@
 #define AppName "Akis Kurgu AI"
-#define AppVersion "0.3.6"
+; AppVersion comes from akis/__init__.py: CI passes /DAppVersion=<version>.
+; Local build: iscc /DAppVersion=0.3.7 installer.iss
+#ifndef AppVersion
+  #define AppVersion "0.0.0-dev"
+#endif
 [Setup]
 AppId={{3F3FE53D-553B-4D25-9169-4493F9AFD241}
 AppName={#AppName}

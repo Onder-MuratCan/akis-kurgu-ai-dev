@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 from PySide6.QtCore import QThread, Signal
+from akis.media_service import input_args
 
 SAMPLE_RATE = 1000
 WINDOW = 50
@@ -22,7 +23,7 @@ class WaveformWorker(QThread):
         self.executable, self.source = executable, source
     def run(self):
         try:
-            result = subprocess.run([self.executable, '-v', 'error', '-i', self.source, '-t', str(MAX_SECONDS), '-vn', '-ac', '1', '-ar', str(SAMPLE_RATE), '-f', 's16le', 'pipe:1'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0, timeout=180)
+            result = subprocess.run([self.executable, '-v', 'error', *input_args(self.source), '-t', str(MAX_SECONDS), '-vn', '-ac', '1', '-ar', str(SAMPLE_RATE), '-f', 's16le', 'pipe:1'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0, timeout=180)
             self.ready.emit(self.source, peaks_from_pcm(result.stdout) if result.returncode == 0 else [])
         except (OSError, subprocess.TimeoutExpired):
             self.ready.emit(self.source, [])
